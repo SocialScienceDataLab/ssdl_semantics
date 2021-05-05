@@ -10,10 +10,10 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 
-A Political Science Example
+#A Political Science Example
 
 
-### CAP
+## CAP
 
 The comparative agenda project offers numerous interesting datasets of coded documents from news articles, parliamentary questions, laws and bills to manifestos. The data can be found here. This is particularly useful if you are interest in using types of semisupervised classification. 
 
@@ -77,7 +77,7 @@ dfc<-dfm(ft)
 
 ```
 
-
+## Dictionaries and Gold Standards
 
 
 Let's first try a dictionary approach, just for fun. One of the earliest approaches was Laver and Gerry 2000, who designed a dictionary for british election manifestos. I use a reduced version here. I am aware this is not fair to the dictionary ;)
@@ -98,7 +98,7 @@ assaults", "burglar*", "court", "disorder", "drug*", "hooligan*", "police",
 
 ```
 
-We then create a codable subdataset, called a goldstandard test.
+We then create a codable subset, called a gold standard test.
 
 
 ```{r}
@@ -154,7 +154,7 @@ plot(res)
 ```
 
 
-### Topic Classification
+## Topic Classification
 
 
 Next we will focus on the main reason we use this data sets: identfication of topics
