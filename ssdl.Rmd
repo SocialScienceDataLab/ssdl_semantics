@@ -1,0 +1,355 @@
+---
+title: "Semantic Validation and Accuracy"
+author: "Marius Sältzer"
+date: "15 8 2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+A Political Science Example
+
+
+### CAP
+
+The comparative agenda project offers numerous interesting datasets of coded documents from news articles, parliamentary questions, laws and bills to manifestos. The data can be found here. This is particularly useful if you are interest in using types of semisupervised classification. 
+
+https://www.comparativeagendas.net/datasets_codebooks
+
+
+```{r}
+# install.packages("devtools")
+devtools::install_github("chainsawriot/oolong")
+```
+
+
+
+```{r}
+if(!require(lubridate)){install.packages("lubridate")}
+if(!require(stm)){install.packages("stm")}
+if(!require(quanteda)){install.packages("quanteda")}
+if(!require(quanteda.textmodels)){install.packages("quanteda.textmodels")}
+if(!require(dplyr)){install.packages("dplyr")}
+
+```
+
+
+
+```{r}
+library(dplyr)
+library(quanteda)
+library(oolong)
+library(stm)
+library(seededlda)
+```
+
+## Building Ground Truth
+
+To get an idea about how the model should perform, we first curate a dataset on which classifcation works well. I chose the 8 best categories that allow good classification.
+
+
+```{r}
+
+
+load("./data/corpus.rdata")
+
+### create optinal vector
+cats<-c("Public Lands","Health","Immigration","Energy","Defense","Transportation","Law and Crime","Environment","Education")
+# social welfare / crine
+
+uk_corp<-corpus_subset(uk_corp,docvars(uk_corp,"cat")%in%cats)
+
+```
+
+First, prepare the data: 
+
+
+```{r}
+
+ft<-tokens(uk_corp,remove_punct=T,remove_numbers = T)
+ft<-tokens_tolower(ft)
+ft<-tokens_select(ft,pattern=stopwords("en"),selection='remove')
+
+dfc<-dfm(ft)
+
+```
+
+
+
+
+Let's first try a dictionary approach, just for fun. One of the earliest approaches was Laver and Gerry 2000, who designed a dictionary for british election manifestos. I use a reduced version here. I am aware this is not fair to the dictionary ;)
+
+```{r}
+laver_short<-dictionary(list(
+prog=c("assist", "benefit", "care", "disabilities", "educat*", "invest", "pension",
+"harassment", "non-custodial",
+"car", "chemical*", "ecolog*", "emission*", "green", "planet",
+"cruel*", "discriminat*", "human", "injustice*", "rights"," sex*"
+) ,
+cons=c( "defend", "discipline", "glorious", "honour", "immigra*", "marriage",
+"autonomy", "bidders", "choice*", "controls", "franchise*", "market,
+assaults", "burglar*", "court", "disorder", "drug*", "hooligan*", "police",
+"product*")))
+
+
+
+```
+
+We then create a codable subdataset, called a goldstandard test.
+
+
+```{r}
+
+oolong_gold <- create_oolong(input_corpus = texts(uk_corp), construct = "conservative",exact_n = 20)
+oolong_gold
+
+```
+
+We are asked for each of the random sentences whether they are conservative, or implicitely, liberal.
+
+```{r}
+
+oolong_gold$do_gold_standard_test()
+
+```
+After we entered out "gold standard" we lock the test...
+
+```{r gs_locking}
+oolong_gold$lock()
+oolong_gold
+```
+
+
+and turn it into gold.
+
+```{r}
+oolong_gold$turn_gold()
+
+```
+
+In this example, we calculate the scores using the dictionary now:
+
+```{r}
+
+btw_sent <- dfm(gold_standard, tolower=T, dictionary = laver_short)
+cons <- as.numeric(btw_sent[,"cons"]) - as.numeric(btw_sent[,"prog"])
+
+```
+
+Put back the vector of AFINN score into the respective `docvars` and study the correlation between the gold standard and AFINN.
+
+```{r}
+res<-summarize_oolong(oolong_gold, target_value = cons)
+summarize_oolong(oolong_gold, target_value = cons)
+
+```
+
+We then can plot the results (for more detail, read the vignette)
+```{r}
+
+plot(res)
+```
+
+
+### Topic Classification
+
+
+Next we will focus on the main reason we use this data sets: identfication of topics
+
+
+```{r}
+df<-docvars(uk_corp)
+plot(as.factor(df$cat),as.factor(df$party))
+
+
+```
+
+To get an idea, we first use the coded data to train a simple classifier
+
+```{r}
+names(docvars(dfc))
+## topic models, word intrusion tests for cap data
+    
+  # do topic models best fit, do WIT
+
+## supervised wit for cap data
+
+id_train <- sample(1:ndoc(dfc), round(0.7*ndoc(dfc)), replace = FALSE)
+
+
+head(id_train, 10)
+
+docvars(dfc,"id_numeric") <- 1:ndoc(dfc)
+
+# get training set
+dfmat_training <- dfm_subset(dfc, id_numeric %in% id_train)
+
+# get test set 
+dfmat_test <- dfm_subset(dfc, !id_numeric %in% id_train)
+
+## ----------------------------------------------------------------------
+
+tmod_nb <- textmodel_nb(dfmat_training, dfmat_training$cat)
+
+dfmat_matched<-dfm_match(dfmat_test,features = featnames(dfmat_training))
+
+actual_class <- dfmat_matched$cat
+
+predicted_class<-predict(tmod_nb, newdata = dfmat_matched)
+tab_class <- table(actual_class, predicted_class)
+
+c1<-caret::confusionMatrix(tab_class, mode = "everything")
+
+
+```
+
+
+Let's look at the confusion matrix and see how well the model performs
+
+```{r}
+c1
+```
+## Comparing Unsupervised Methods
+
+Now let's see whether we can replicate these kinds of results using unsupervised methods. Then, we can check how the performance relates to semantic validity by performing word and topic intrusion tests.
+
+We use a structural topic model to assign a known number of topics 
+
+
+```{r}
+
+processed <- textProcessor(texts(uk_corp),metadata = docvars(uk_corp),stem = F)
+
+
+out <- prepDocuments(processed$documents, processed$vocab,processed$meta)
+
+docs <- out$documents
+vocab <- out$vocab
+meta <- out$meta
+```
+
+```{r}
+
+fit0 <- stm(out$documents, # the documents
+            out$vocab, # the words
+            K = 8, # 8 topics
+            max.em.its = 300, # set to run for a maximum of 75 EM iterations
+            data = out$meta, # all the variables (we're not actually including any predictors in this model, though)
+            init.type = "Spectral")  # uses some sort of svd
+
+```
+
+
+```{r}
+load("./models/stm_8.rdata")
+```
+
+```{r}
+labelTopics(fit0)
+``` 
+
+### Systematic Semantic Validation
+
+Now, as we have found our favorite model, let's see whether this is as valid as we might assume from simple topic inspection. Of course, some categories make sense, while others may not, but does "making sense" really can tell us more than eyeballing? 
+
+This practice has often been described as "reading tea leaves" following the analogy by Chang et. al. 2009. To validate topic models, they suggest a number of tests to make sure our topics are valid. This can be administrated by the oolong package. There are two ways to use this with models: you can either just use the model itself for word intrusion tests or both the model and the corpus for topic intrusion.
+
+```{r}
+corp<-texts(uk_corp)
+oolong_test <- create_oolong(fit0,texts(uk_corp))
+
+```
+
+
+Chang et. al. suggest so called word intrusion tests: if we can't find out which word does not belong to a topic, we can't be sure that our topics are assigned correctly. If we do not observe an influential word from another topic as being "wrong", it might lead to miscategorization in many cases. It fights the human instinct to see affirmative information while ignoring the rest. The word intrusion test will give you one list of words per topic where you need to spot the intruder word. 
+
+
+
+
+```{r}
+oolong_test$do_word_intrusion_test()
+o1$lock(force=T)
+o1$print()
+
+```
+
+
+The second approach is a topic intrusion test (see slides)
+
+
+```{r}
+oolong_test
+oolong_test$do_topic_intrusion_test()
+oolong_test$lock()
+
+```
+
+
+Afterwards, we lock the object and print the result.
+
+```{r}
+o1$lock(force=T)
+o1$print()
+
+``` 
+
+In general, you can use the clone functionto make several copies of any test you want to adiminstrate and save them. You can also deploy this as a shiny app to coders.
+
+
+
+
+
+So how do these new categories relate to the real categories now?
+
+
+```{r}
+meta$pred<-max.col(fit0$theta)
+
+
+t1<-as.matrix(table(meta$pred,meta$cat))
+
+print(t1)
+
+
+
+```
+In comparison, once again the NB
+
+```{r}
+c1
+```
+
+Well, that doesn't look so good. Let's try sth else! This is the newest addition, a super fast lda implemented in the quanteda framework: 
+
+```{r}
+#devtools::install_github("koheiw/seededlda")
+
+
+```
+
+
+```{r}
+fit01<-seededlda::textmodel_lda(dfc,k=8)
+```
+
+```{r}
+docvars(dfc,"top_lda")<-topics(fit01)
+
+t1<-as.matrix(table(docvars(dfc,"top_lda"),docvars(dfc,"cat")))
+
+print(t1)
+
+```
+
+
+
+```{r}
+oolong_test2 <- create_oolong(fit01)
+oolong_test2$do_word_intrusion_test()
+o1$lock(force=T)
+o1$print()
+```
+
